@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import subprocess
+import glob
+import optparse
+import pipes
+
+# The template for the command we will run on the input files.
+command = 'mencoder -forceidx -oac copy -ovc copy {0} -o {1}'
+
+def infile_list(args):
+    """Do glob expansion on all input arguments, POSIXly escape the filenames and concatenate into
+    single list."""
+    infiles = []
+    for arg in args:
+        infiles += glob.glob(arg)
+    infiles = [pipes.quote(f) for f in infiles]
+    return infiles
+
+def main():
+    # Deal with the argument list.
+    parser = optparse.OptionParser()
+    parser.add_option('-o', '--outfile', dest='outfile',
+                      help='Writes the output to FILE', metavar='FILE')
+    options, args = parser.parse_args()
+    infiles = infile_list(args)
+    if not infiles:
+        print "No input files specified."
+        return 1
+    outfile = pipes.quote(options.outfile) if options.outfile else 'out.avi'
+    
+    # DEBUG, to see exactly what command we're running.
+    print command.format(' '.join(infiles), outfile)
+    
+    # Call mencoder to concatenate the files.
+    return subprocess.call(command.format(' '.join(infiles), outfile), shell=True)
+    
+if __name__ == '__main__':
+    sys.exit(main())
+    

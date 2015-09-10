@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+# -*- coding: utf8 -*-
+
+
+"""Usage: scrubtorrents [options]
+
+Options:
+    -h --help          Print this help message
+    -d --dry-run       Print out all prospective changes but don't do anything.
+    -u --username=str  Username to use to connect to transmission-daemon
+    -p --password=str  Password to use to connect to transmission-daemon
+    -v --verbose       Print out extra info and all the changes that are being made.
+"""
+
+import transmissionrpc
+import shutil
+import os
+import stat
+import docopt
+import yaml
+
+PREFIX = '/srv/torrent'
+
+AUTODIR = PREFIX + '/auto'
+SEEDDIR = PREFIX + '/seeding'
+COMPLETEDIR = PREFIX + '/complete'
+
+CFGFILE = '/etc/scrubtorrents.yaml'
+
+def main():
+    arguments = docopt.docopt(__doc__)
+    
+    try:
+        with open(CFGFILE) as yamlfile:
+            cfg = yaml.load(yamlfile)
+    except (OSError, IOError) as e:
+        cfg = {}
+    
+    cfg['username'] = value_or_default(arguments['--username'], cfg['username'])
+    cfg['password'] = value_or_default(arguments['--password'], cfg['password'])
+    dryrun = arguments['--dry-run']
+    verbose = arguments['--verbose']
+    
+    if dryrun:
+        verbose = True
+        print("Dry run. Nothing will be changed.")
+    
+    tconn = transmissionrpc.Client(
+        cfg['hostname'],
+        port=cfg['port'],
+        user=cfg['username'],
+        password=cfg['password']
+    )
+    torrents = tconn.get_torrents()
+    
+    deletelist = []
+    movelist = []
+    for torrent in torrents:
+        in_autodir = torrent.downloadDir.startswith(AUTODIR)
+        in_seeddir = torrent.downloadDir.startswith(SEEDDIR)
+        finished = (torrent.status == 'stopped' and torrent.percentDone == 1)\
+                   or torrent.isFinished
+        if finished:
+            if in_autodir:
+                deletelist.append(torrent)
+            elif in_seeddir:
+                movelist.append(torrent)
+    
+    if verbose and len(movelist) == 0 and len(deletelist) == 0:
+        print('No matching torrents. Nothing to do.')
+        exit(0)
+    
+    for torrent in movelist:
+        if verbose:
+            print("Moving torrent '{}' to '{}'".format(torrent.name, COMPLETEDIR))
+        if not dryrun:
+            move(torrent, COMPLETEDIR)
+            tconn.remove_torrent(torrent.id, False)
+    
+    for torrent in deletelist:
+        if has_multilink(torrent):
+            if verbose:
+                print("Deleting torrent '{}'".format(torrent.name))
+            if not dryrun:
+                tconn.remove_torrent(torrent.id, True)
+        else:
+            if verbose:
+                print("Skipping '{}'. Hasn't been added to media library".format(torrent.name))
+
+
+def isdir(torrent):
+    filenames = (f['name'] for f in torrent.files().values());
+    return any('/' in f for f in filenames)
+
+def dirname(torrent):
+    for f in torrent.files().values():
+        return f['name'].split('/', 1)[0]
+
+def filename(torrent):
+    return torrent.files()[0]['name']
+
+def move(torrent, dstprefix):
+    suffix = '/'
+    if isdir(torrent):
+        suffix += dirname(torrent)
+    else:
+        suffix += filename(torrent)
+    src = torrent.downloadDir + suffix
+    dst = dstprefix + suffix
+    if not os.path.exists(dst):
+        shutil.move(src, dst)
+
+def has_multilink(torrent):
+    # Make a list of all files in the torrent
+    files = [f['name'] for f in torrent.files().values()]
+    paths = [os.path.join(torrent.downloadDir, f) for f in files]
+    
+    # Get linkcount for all files (not folders) in torrent
+    linkcounts = []
+    for p in paths:
+        fs = os.stat(p)
+        if stat.S_ISREG(fs.st_mode):
+            linkcounts.append(fs.st_nlink)
+    
+    # If any file has multiple inode links, has_multilink() -> True
+    return any(l > 1 for l in linkcounts)
+
+def value_or_default(value, default):
+    if value == None: return default
+    return value
+
+if __name__ == '__main__':
+    main()
+

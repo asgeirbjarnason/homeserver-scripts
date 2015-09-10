@@ -1,0 +1,32 @@
+#!/bin/bash
+
+MODSTRING="fixed"
+OUTFILE=""
+
+if [ !(-f "$1") ]; then
+  echo "File doesn't exist!"
+  exit 1
+fi
+
+if [[ "$1" =~ / ]]; then
+  FULLPATH=${1%/*}
+  FULLNAME=${1##*/}
+
+  if [[ "$FULLNAME" =~ \. ]]; then
+    SANSSUFFIX=${FULLNAME%.*}
+    SUFFIX=${FULLNAME##*.}
+    OUTFILE="${FULLPATH}/${SANSSUFFIX}-${MODSTRING}.${SUFFIX}"
+  else
+    OUTFILE="${FULLPATH}/${FULLNAME}-${MODSTRING}"
+  fi
+else
+  if [[ "$1" =~ \. ]]; then
+      SANSSUFFIX=${1%.*}
+      SUFFIX=${1##*.}
+      OUTFILE="${SANSSUFFIX}-${MODSTRING}.${SUFFIX}"
+  else
+      OUTFILE="${1}-${MODSTRING}"
+  fi
+fi
+
+mencoder -idx "$1" -ovc copy -oac copy -o "$OUTFILE"
